@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <title>圣诞粒子树（全适配版）</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #1F0F12;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            cursor: pointer;
+            touch-action: none;
+            /* 防止页面滚动 */
+            height: 100vh;
+            width: 100vw;
+        }
+        #canvasContainer {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            max-width: 800px;
+            max-height: calc(800px * 4 / 3);
+            /* 保持3:4比例 */
+            margin: 0 auto;
+        }
+        canvas {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 50px rgba(255, 105, 180, 0.5);
+            /* 保证3:4比例 */
+            aspect-ratio: 3 / 4;
+            width: 90%;
+            height: auto;
+        }
+        .tip {
+            position: fixed;
+            bottom: 2vw;
+            left: 0;
+            right: 0;
+            color: #fff;
+            font-size: clamp(12px, 2vw, 16px);
+            opacity: 0.7;
+            text-align: center;
+            pointer-events: none;
+            line-height: 1.5;
+            padding: 0 20px;
+        }
+        /* 隐藏移动端地址栏 */
+        @media screen and (max-height: 500px) {
+            .tip {
+                display: none;
+            }
+        }
+        /* 横屏适配 */
+        @media (orientation: landscape) and (max-width: 900px) {
+            #canvasContainer {
+                max-width: calc(100vh * 3 / 4);
+                max-height: 90vh;
+            }
+            .tip {
+                bottom: 1vw;
+                font-size: clamp(10px, 1.5vw, 14px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="canvasContainer">
+        <canvas id="treeCanvas"></canvas>
+    </div>
+    <div class="tip">点击切换主题 | 滑动控旋转速度 | 触摸点亮粒子</div>
+
+    <script>
+        const canvasContainer = document.getElementById('canvasContainer');
+        const canvas = document.getElementById('treeCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // 三套圣诞主题配色
+        const themes = [
+            {
+                name: '霓虹粉紫',
+                bg_col: '#1F0F12',
+                tree_cols: ['#D37093', '#FF69B4', '#FFBFC7'],
+                star_col: '#FFD700',
+                trunk_col: '#4A3728',
+                text_col: '#FFCCCF',
+                snow_col: '#FFFFF5',
+                ribbon_col: '#FFFFFF',
+                shadow: 'rgba(255, 105, 180, 0.5)',
+                flash_col: '#FFE6F2'
+            },
+            {
+                name: '圣诞红金',
+                bg_col: '#0A0508',
+                tree_cols: ['#C70039', '#FF5733', '#FFC300'],
+                star_col: '#FFDF00',
+                trunk_col: '#8B4513',
+                text_col: '#FFE6E6',
+                snow_col: '#FFFFFF',
+                ribbon_col: '#FF0000',
+                shadow: 'rgba(255, 87, 51, 0.5)',
+                flash_col: '#FFF3CD'
+            },
+            {
+                name: '冰蓝梦幻',
+                bg_col: '#050F29',
+                tree_cols: ['#74B9FF', '#00CEC9', '#A29BFE'],
+                star_col: '#FFFFFF',
+                trunk_col: '#636E72',
+                text_col: '#E0FFFF',
+                snow_col: '#F1F9FF',
+                ribbon_col: '#FFFFFF',
+                shadow: 'rgba(116, 185, 255, 0.5)',
+                flash_col: '#E5F7FF'
+            }
+        ];
+        let currentTheme = 0;
+        let cfg = themes[currentTheme];
+
+        // 动态计算画布尺寸（基于容器，保持3:4）
+        let canvasWidth, canvasHeight;
+        function calcCanvasSize() {
+            const containerW = canvasContainer.clientWidth;
+            const containerH = canvasContainer.clientHeight;
+            // 按3:4比例计算最佳尺寸
+            const ratio = 3 / 4;
+            if (containerW / containerH > ratio) {
+                canvasHeight = containerH;
+                canvasWidth = canvasHeight * ratio;
+            } else {
+                canvasWidth = containerW;
+                canvasHeight = canvasWidth / ratio;
+            }
+            // 最小尺寸限制
+            canvasWidth = Math.max(canvasWidth, 300);
+            canvasHeight = Math.max(canvasHeight, 400);
+            // 最大尺寸限制
+            canvasWidth = Math.min(canvasWidth, 800);
+            canvasHeight = Math.min(canvasHeight, 1066);
+
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+        }
+
+        // 初始化尺寸并监听窗口变化
+        calcCanvasSize();
+        window.addEventListener('resize', () => {
+            calcCanvasSize();
+            initData(); // 重新生成粒子适配新尺寸
+        });
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => {
+                calcCanvasSize();
+                initData();
+            }, 200);
+        });
+
+        let particles = [];
+        let snowflakes = [];
+        let angle = 0;
+        let rotateSpeed = 0.02;
+        const speedRange = { min: 0.005, max: 0.05 };
+
+        // 触摸相关变量
+        let isTouching = false;
+        let lastTouchX = 0;
+        let touchPos = { x: -100, y: -100 };
+        // 动态计算闪烁范围（基于画布尺寸）
+        let flashRadius;
+        // 性能优化：根据设备性能调整粒子数量
+        let particleCountConfig = {
+            trunk: 1000,
+            leaf: 8000,
+            ribbon: 4000,
+            snow: 200
+        };
+        function adjustParticleCount() {
+            // 移动设备/小屏幕减少粒子数量
+            const isMobile = /Mobile|Android|iPhone/i.test(navigator.userAgent);
+            const scale = isMobile || canvasWidth < 500 ? 0.6 : 1;
+            particleCountConfig = {
+                trunk: Math.floor(1000 * scale),
+                leaf: Math.floor(8000 * scale),
+                ribbon: Math.floor(4000 * scale),
+                snow: Math.floor(200 * scale)
+            };
+            flashRadius = canvasWidth * 0.13; // 按画布宽度比例计算闪烁范围
+        }
+
+        // 初始化粒子数据
+        function initData() {
+            adjustParticleCount();
+            particles = [];
+            snowflakes = [];
+
+            // 树干粒子
+            for (let i = 0; i < particleCountConfig.trunk; i++) {
+                const h = Math.random() * 0.2 - 0.7;
+                const r = Math.random() * 0.05;
+                const theta = Math.random() * Math.PI * 2;
+                particles.push({
+                    x: r * Math.cos(theta),
+                    y: h,
+                    z: r * Math.sin(theta),
+                    col: cfg.trunk_col,
+                    size: 1.2,
+                    type: 'trunk',
+                    flash: 0
+                });
+            }
+
+            // 树叶粒子
+            const layers = 7;
+            for (let i = 0; i < particleCountConfig.leaf; i++) {
+                const h = Math.random();
+                const base_r = (1 - h) * 0.6;
+                const layer_cycle = 0.65 * layers * Math.PI;
+                const r = base_r * (1 - Math.pow(h / layer_cycle, 0.7));
+                const theta = Math.random() * Math.PI * 2;
+                const col = cfg.tree_cols[Math.floor(Math.random() * cfg.tree_cols.length)];
+                
+                particles.push({
+                    x: r * Math.cos(theta),
+                    y: h - 0.5,
+                    z: r * Math.sin(theta),
+                    col: col,
+                    size: Math.random() * 1.2 + 0.6,
+                    type: 'leaf',
+                    flash: 0
+                });
+            }
+
+            // 丝带粒子
+            for (let i = 0; i < particleCountConfig.ribbon; i++) {
+                const h = (i / particleCountConfig.ribbon) * 0.95;
+                const r = (1 - h) * 0.5 + 0.05;
+                const theta = Math.random() * Math.PI * 2;
+                particles.push({
+                    x: r * Math.cos(theta),
+                    y: h - 0.5,
+                    z: r * Math.sin(theta),
+                    col: cfg.ribbon_col,
+                    size: 0.9,
+                    type: 'ribbon',
+                    flash: 0
+                });
+            }
+
+            // 雪花粒子
+            for (let i = 0; i < particleCountConfig.snow; i++) {
+                snowflakes.push({
+                    x: Math.random() * 2 - 1,
+                    y: Math.random() * 2 - 0.5,
+                    z: Math.random() * 2 - 1,
+                    speed: Math.random() * 0.005 + 0.001,
+                    size: Math.random() * 0.5 + 0.5
+                });
+            }
+        }
+
+        // 3D投影转换（适配动态画布尺寸）
+        function project(p, rotateAngle = 0) {
+            const cosA = Math.cos(rotateAngle);
+            const sinA = Math.sin(rotateAngle);
+            const xRot = p.x * cosA - p.z * sinA;
+            const zRot = p.x * sinA + p.z * cosA;
+            const depth = 1 / (2.5 - zRot);
+            // 动态投影系数，适配不同画布尺寸
+            const projScale = canvasWidth * 1.3;
+            const projX = xRot * depth * projScale + canvasWidth / 2;
+            const projY = -p.y * depth * projScale + canvasHeight * 0.55;
+            const projSize = (p.size || 1) * depth * (canvasWidth / 600) * 3;
+            const alpha = (zRot + 1.2) / 2;
+
+            return {
+                x: projX,
+                y: projY,
+                size: projSize,
+                alpha: alpha,
+                z: zRot
+            };
+        }
+
+        // 绘制树顶星星（适配画布尺寸）
+        function drawStar(angle) {
+            const star = project({ x: 0, y: 0.52, z: 0 }, angle);
+            const r = canvasWidth * 0.03; // 按画布宽度比例计算星星大小
+
+            ctx.save();
+            ctx.translate(star.x, star.y);
+            ctx.fillStyle = cfg.star_col;
+            ctx.shadowColor = '#fff';
+            ctx.shadowBlur = canvasWidth * 0.03; // 动态光晕大小
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                ctx.lineTo(
+                    r * Math.sin((i * 72) / 180 * Math.PI),
+                    r * Math.cos((i * 72) / 180 * Math.PI)
+                );
+                ctx.lineTo(
+                    (r / 2) * Math.sin(((i * 72) + 36) / 180 * Math.PI),
+                    (r / 2) * Math.cos(((i * 72) + 36) / 180 * Math.PI)
+                );
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // 动画循环（性能优化：使用requestAnimationFrame并节流）
+        let lastRenderTime = 0;
+        function render(timestamp) {
+            // 控制帧率，避免过度渲染
+            if (timestamp - lastRenderTime < 16) { // 约60fps
+                requestAnimationFrame(render);
+                return;
+            }
+            lastRenderTime = timestamp;
+
+            ctx.fillStyle = cfg.bg_col;
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            angle += rotateSpeed;
+
+            // 绘制雪花
+            ctx.fillStyle = cfg.snow_col;
+            snowflakes.forEach(s => {
+                s.y += s.speed;
+                if (s.y > 1.2) s.y = -0.5;
+                const p = project({ x: s.x, y: s.y, z: s.z }, angle);
+                ctx.globalAlpha = 0.6;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size * (canvasWidth / 600), 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            });
+
+            // 粒子排序 & 计算闪烁强度
+            const renderQueue = particles.map(p => {
+                const proj = project(p, angle);
+                const dx = proj.x - touchPos.x;
+                const dy = proj.y - touchPos.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < flashRadius) {
+                    p.flash = 1 - dist / flashRadius;
+                } else {
+                    p.flash *= 0.9;
+                }
+                return { p, proj };
+            }).sort((a, b) => b.proj.z - a.proj.z);
+
+            // 绘制粒子
+            renderQueue.forEach(item => {
+                const p = item.p;
+                const proj = item.proj;
+                ctx.globalAlpha = Math.max(0, proj.alpha);
+                
+                if (p.flash > 0) {
+                    ctx.fillStyle = cfg.flash_col;
+                    ctx.beginPath();
+                    ctx.arc(proj.x, proj.y, proj.size * (1 + p.flash), 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                ctx.fillStyle = p.col;
+                ctx.beginPath();
+                ctx.arc(proj.x, proj.y, proj.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // 绘制文字（适配画布尺寸）
+            drawStar(angle);
+            ctx.fillStyle = cfg.text_col;
+            const textSize = canvasWidth * 0.07; // 动态文字大小
+            ctx.font = `italic ${textSize}px Times New Roman`;
+            ctx.textAlign = 'center';
+            ctx.shadowColor = cfg.tree_cols[1];
+            ctx.shadowBlur = canvasWidth * 0.02;
+            ctx.fillText('Merry Christmas', canvasWidth / 2, canvasHeight - canvasHeight * 0.08);
+            ctx.shadowBlur = 0;
+
+            requestAnimationFrame(render);
+        }
+
+        // 切换主题
+        function switchTheme() {
+            currentTheme = (currentTheme + 1) % themes.length;
+            cfg = themes[currentTheme];
+            document.querySelector('canvas').style.boxShadow = `0 0 50px ${cfg.shadow}`;
+            document.body.style.backgroundColor = cfg.bg_col;
+            initData();
+        }
+
+        // 触摸/鼠标事件处理（适配不同设备的坐标）
+        function getEventPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            let x, y;
+            if (e.touches) {
+                x = e.touches[0].clientX - rect.left;
+                y = e.touches[0].clientY - rect.top;
+            } else {
+                x = e.clientX - rect.left;
+                y = e.clientY - rect.top;
+            }
+            // 转换为画布内部坐标（解决缩放偏移）
+            x = x * (canvas.width / rect.width);
+            y = y * (canvas.height / rect.height);
+            return { x, y };
+        }
+
+        function handleTouchStart(e) {
+            isTouching = true;
+            const pos = getEventPos(e);
+            lastTouchX = pos.x;
+            touchPos = pos;
+        }
+
+        function handleTouchMove(e) {
+            if (!isTouching) return;
+            const pos = getEventPos(e);
+            const deltaX = pos.x - lastTouchX;
+            // 动态调整速度灵敏度，适配不同屏幕
+            const sensitivity = canvasWidth / 600 * 0.0001;
+            rotateSpeed += deltaX * sensitivity;
+            rotateSpeed = Math.max(speedRange.min, Math.min(speedRange.max, rotateSpeed));
+            lastTouchX = pos.x;
+            touchPos = pos;
+            e.preventDefault();
+        }
+
+        function handleTouchEnd() {
+            isTouching = false;
+            const resetSpeed = setInterval(() => {
+                if (Math.abs(rotateSpeed - 0.02) < 0.001) {
+                    rotateSpeed = 0.02;
+                    clearInterval(resetSpeed);
+                } else {
+                    rotateSpeed += (0.02 - rotateSpeed) * 0.1;
+                }
+            }, 30);
+        }
+
+        // 电脑端鼠标事件适配
+        function handleMouseDown(e) {
+            handleTouchStart(e);
+        }
+
+        function handleMouseMove(e) {
+            handleTouchMove(e);
+        }
+
+        function handleMouseUp() {
+            handleTouchEnd();
+        }
+
+        // 绑定事件
+        canvas.addEventListener('click', switchTheme);
+        canvas.addEventListener('touchstart', handleTouchStart);
+        canvas.addEventListener('touchmove', handleTouchMove);
+        canvas.addEventListener('touchend', handleTouchEnd);
+        canvas.addEventListener('mousedown', handleMouseDown);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseup', handleMouseUp);
+        canvas.addEventListener('mouseleave', handleMouseUp);
+
+        // 启动动画
+        initData();
+        render(0);
+    </script>
+</body>
+</html>
